@@ -1,0 +1,5 @@
+flask==3.0.2
+alibabacloud_imagesearch20201214
+alibabacloud_tea_openapi
+alibabacloud_tea_util
+requests==2.31.0 
