@@ -132,45 +132,50 @@ def process_upload_task(task_data):
             
             # 下载并上传每个图片
             for index, image_url in enumerate(custom_images):
-                start_time = time.time()  # 开始计时
-                
-                # 下载图片
-                image_data = download_image(image_url, custom_sku, index)
-                if not image_data:
-                    continue
-                
-                # 计算图片大小（字节）
-                image_size = image_data.getbuffer().nbytes
-                
-                # 获取限流令牌
-                wait_time = rate_limiter.acquire(image_size)
-                if wait_time > 0:
-                    logger.info(f"Rate limiting: waiting {wait_time:.2f} seconds for image {custom_sku}_{index}")
-                    time.sleep(wait_time)
-
                 try:
-                    # 创建上传请求
-                    request = AddImageAdvanceRequest()
-                    request.instance_name = INSTANCE_NAME
-                    request.product_id = f"{custom_sku}"
-                    request.pic_name = f"{custom_sku}_image_{index}"
-                    request.pic_content_object = image_data
-                    request.crop = True  # 启用主体识别
-
-                    # 发送请求
-                    runtime = RuntimeOptions()
-                    response = client.add_image_advance(request, runtime)
-
-                    # 计算处理时间
-                    end_time = time.time()
-                    processing_time = end_time - start_time
-                    print(response)
-                    logger.info(f"Successfully uploaded image {custom_sku}_{index}: {response.to_map()}")
-                    logger.info(f"处理耗时: {processing_time:.2f}秒, 图片大小: {image_size/1024:.2f}KB, 当前队列任务数: {task_queue.qsize()}, 本批次订单数: {len(orders)}")
+                    start_time = time.time()  # 开始计时
                     
-                finally:
-                    # 确保关闭BytesIO对象
-                    image_data.close()
+                    # 下载图片
+                    image_data = download_image(image_url, custom_sku, index)
+                    if not image_data:
+                        logger.error(f"Failed to download image {image_url} for SKU: {custom_sku}")
+                        continue
+                    
+                    # 计算图片大小（字节）
+                    image_size = image_data.getbuffer().nbytes
+                    
+                    # 获取限流令牌
+                    wait_time = rate_limiter.acquire(image_size)
+                    if wait_time > 0:
+                        logger.info(f"Rate limiting: waiting {wait_time:.2f} seconds for image {custom_sku}_{index}")
+                        time.sleep(wait_time)
+
+                    try:
+                        # 创建上传请求
+                        request = AddImageAdvanceRequest()
+                        request.instance_name = INSTANCE_NAME
+                        request.product_id = f"{custom_sku}"
+                        request.pic_name = f"{custom_sku}_image_{index}"
+                        request.pic_content_object = image_data
+                        request.crop = True  # 启用主体识别
+
+                        # 发送请求
+                        runtime = RuntimeOptions()
+                        response = client.add_image_advance(request, runtime)
+
+                        # 计算处理时间
+                        end_time = time.time()
+                        processing_time = end_time - start_time
+                        logger.info(f"Successfully uploaded image {custom_sku}_{index}: {response.to_map()}")
+                        logger.info(f"处理耗时: {processing_time:.2f}秒, 图片大小: {image_size/1024:.2f}KB, 当前队列任务数: {task_queue.qsize()}, 本批次订单数: {len(orders)}")
+                        
+                    finally:
+                        # 确保关闭BytesIO对象
+                        image_data.close()
+                        
+                except Exception as e:
+                    logger.error(f"Error processing image {image_url} for SKU {custom_sku}: {str(e)}")
+                    continue  # 继续处理下一张图片
                 
     except Exception as e:
         logger.error(f"Error processing upload task: {str(e)}")
