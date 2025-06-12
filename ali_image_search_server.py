@@ -152,7 +152,7 @@ def process_upload_task(task_data):
                     # 创建上传请求
                     request = AddImageAdvanceRequest()
                     request.instance_name = INSTANCE_NAME
-                    request.product_id = f"{custom_sku}_{index}"
+                    request.product_id = f"{custom_sku}"
                     request.pic_name = f"{custom_sku}_image_{index}"
                     request.pic_content_object = image_data
                     request.crop = True  # 启用主体识别
