@@ -15,6 +15,8 @@ import requests
 from urllib.parse import urlparse
 import os
 from io import BytesIO
+from PIL import Image
+import io
 
 # 配置日志
 logging.basicConfig(level=logging.INFO,
@@ -36,6 +38,54 @@ BUCKET_SIZE = 1024 * 1024  # 1MB 桶大小
 TEMP_DIR = "temp_images"
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+def compress_image(image_data, max_size_mb=4, quality=85):
+    """
+    压缩图片
+    :param image_data: BytesIO对象，包含原始图片数据
+    :param max_size_mb: 最大文件大小（MB）
+    :param quality: 压缩质量（1-100）
+    :return: 压缩后的BytesIO对象
+    """
+    try:
+        # 打开图片
+        img = Image.open(image_data)
+        
+        # 如果是RGBA模式，转换为RGB
+        if img.mode == 'RGBA':
+            img = img.convert('RGB')
+        
+        # 创建输出BytesIO对象
+        output = BytesIO()
+        
+        # 初始质量
+        current_quality = quality
+        
+        while True:
+            # 清空输出缓冲区
+            output.seek(0)
+            output.truncate()
+            
+            # 保存图片
+            img.save(output, format='JPEG', quality=current_quality)
+            
+            # 检查大小
+            if output.tell() <= max_size_mb * 1024 * 1024:
+                break
+                
+            # 如果还是太大，降低质量继续尝试
+            current_quality -= 5
+            if current_quality < 5:
+                logger.warning(f"无法将图片压缩到{max_size_mb}MB以下，使用最低质量")
+                break
+        
+        # 将指针移到开始位置
+        output.seek(0)
+        return output
+        
+    except Exception as e:
+        logger.error(f"压缩图片时发生错误: {str(e)}")
+        return None
+
 def download_image(url, custom_sku, index):
     """
     下载图片并返回BytesIO对象
@@ -53,7 +103,16 @@ def download_image(url, custom_sku, index):
         
         # 将指针移到开始位置
         image_data.seek(0)
-        return image_data
+        
+        # 压缩图片
+        compressed_data = compress_image(image_data)
+        if compressed_data:
+            # 关闭原始数据
+            image_data.close()
+            return compressed_data
+        else:
+            return image_data
+            
     except Exception as e:
         logger.error(f"Error downloading image {url}: {str(e)}")
         return None
@@ -143,6 +202,12 @@ def process_upload_task(task_data):
                     
                     # 计算图片大小（字节）
                     image_size = image_data.getbuffer().nbytes
+                    
+                    # 检查图片大小是否超过4MB
+                    if image_size > 4 * 1024 * 1024:  # 4MB = 4 * 1024 * 1024 bytes
+                        logger.warning(f"Image {image_url} for SKU {custom_sku} exceeds 4MB limit (size: {image_size/1024/1024:.2f}MB), skipping...")
+                        image_data.close()
+                        continue
                     
                     # 获取限流令牌
                     wait_time = rate_limiter.acquire(image_size)
