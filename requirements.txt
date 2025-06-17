@@ -3,3 +3,4 @@ alibabacloud_imagesearch20201214
 alibabacloud_tea_openapi
 alibabacloud_tea_util
 requests==2.31.0 
+pymysql

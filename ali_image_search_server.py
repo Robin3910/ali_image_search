@@ -5,7 +5,7 @@ import threading
 import logging
 import json
 from alibabacloud_imagesearch20201214.client import Client
-from alibabacloud_imagesearch20201214.models import AddImageAdvanceRequest
+from alibabacloud_imagesearch20201214.models import AddImageAdvanceRequest, DeleteImageRequest
 from alibabacloud_tea_openapi.models import Config
 from alibabacloud_tea_util.models import RuntimeOptions
 import base64
@@ -17,18 +17,16 @@ import os
 from io import BytesIO
 from PIL import Image
 import io
+import pymysql
+from datetime import datetime, timedelta
+from config import ALIYUN_CONFIG, DB_CONFIG, LOG_CONFIG, DELETE_CONFIG
 
 # 配置日志
-logging.basicConfig(level=logging.INFO,
-                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=getattr(logging, LOG_CONFIG['level']),
+                   format=LOG_CONFIG['format'])
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-
-# 阿里云配置
-ACCESS_KEY_ID = ""  # 请替换为您的AccessKey ID
-ACCESS_KEY_SECRET = ""  # 请替换为您的AccessKey Secret
-INSTANCE_NAME = ""  # 请替换为您的实例名称
 
 # 限流配置
 RATE_LIMIT = 200 * 1024  # 200KB/s
@@ -160,12 +158,18 @@ def create_client():
     创建阿里云客户端
     """
     config = Config(
-        access_key_id=ACCESS_KEY_ID,
-        access_key_secret=ACCESS_KEY_SECRET
+        access_key_id=ALIYUN_CONFIG['ACCESS_KEY_ID'],
+        access_key_secret=ALIYUN_CONFIG['ACCESS_KEY_SECRET']
     )
-    config.endpoint = 'imagesearch.cn-shenzhen.aliyuncs.com'
-    config.region_id = 'cn-shenzhen'
+    config.endpoint = ALIYUN_CONFIG['ENDPOINT']
+    config.region_id = ALIYUN_CONFIG['REGION_ID']
     config.type = 'access_key'
+    
+    # 如果是内网访问，添加以下配置
+    if ALIYUN_CONFIG.get('USE_INTERNAL_ENDPOINT', False):
+        config.endpoint_type = 'internal'
+        config.endpoint = f"imagesearch-vpc.{ALIYUN_CONFIG['REGION_ID']}.aliyuncs.com"
+    
     return Client(config)
 
 def process_upload_task(task_data):
@@ -218,7 +222,7 @@ def process_upload_task(task_data):
                     try:
                         # 创建上传请求
                         request = AddImageAdvanceRequest()
-                        request.instance_name = INSTANCE_NAME
+                        request.instance_name = ALIYUN_CONFIG['INSTANCE_NAME']
                         request.product_id = f"{custom_sku}"
                         request.pic_name = f"{custom_sku}_image_{index}"
                         request.pic_content_object = image_data
@@ -256,11 +260,104 @@ def worker():
         process_upload_task(task)
         task_queue.task_done()
 
-# 启动工作线程
-for _ in range(5):  # 启动5个工作线程
-    t = threading.Thread(target=worker)
-    t.daemon = True
-    t.start()
+def get_old_custom_skus():
+    """
+    获取指定天数前的定制SKU列表
+    """
+    try:
+        # 计算指定天数前的日期
+        days_ago = datetime.now() - timedelta(days=DELETE_CONFIG['DAYS_AGO'])
+        target_date = days_ago.strftime('%Y-%m-%d')
+        
+        # 连接数据库
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        
+        # 查询SQL
+        sql = """
+        SELECT DISTINCT custom_sku 
+        FROM temu_order 
+        WHERE DATE(create_time) = %s 
+        """
+        
+        cursor.execute(sql, (target_date,))
+        custom_skus = [row[0] for row in cursor.fetchall()]
+        
+        cursor.close()
+        conn.close()
+        
+        logger.info(f"找到 {len(custom_skus)} 个需要删除的定制SKU")
+        return custom_skus
+        
+    except Exception as e:
+        logger.error(f"查询数据库时发生错误: {str(e)}")
+        return []
+
+def delete_images_from_aliyun(custom_skus):
+    """
+    从阿里云图库中删除图片
+    """
+    try:
+        client = create_client()
+        deleted_count = 0
+        failed_count = 0
+        
+        for custom_sku in custom_skus:
+            try:
+                # 创建删除请求
+                request = DeleteImageRequest()
+                request.instance_name = ALIYUN_CONFIG['INSTANCE_NAME']
+                request.product_id = custom_sku
+                # 设置pic_name为None，这样会删除该product_id下的所有图片
+                request.pic_name = None
+                # 不使用filter删除
+                request.is_delete_by_filter = False
+                
+                # 发送请求
+                # runtime = RuntimeOptions()
+                response = client.delete_image(request)
+                
+                # 检查响应
+                response_map = response.to_map()
+                logger.info(f"成功删除图片，SKU: {custom_sku}, 响应: {response_map}")
+                deleted_count += 1
+                
+                # 添加短暂延迟，避免请求过于频繁
+                time.sleep(DELETE_CONFIG['REQUEST_DELAY'])
+                
+            except Exception as e:
+                logger.error(f"删除图片失败，SKU: {custom_sku}, 错误: {str(e)}")
+                failed_count += 1
+                continue
+        
+        logger.info(f"删除完成。成功: {deleted_count}")
+        
+    except Exception as e:
+        logger.error(f"删除图片过程中发生错误: {str(e)}")
+
+def delete_old_images_task():
+    """
+    定时删除旧图片的任务
+    """
+    while True:
+        try:
+            # 获取需要删除的SKU列表
+            custom_skus = get_old_custom_skus()
+            
+            if custom_skus:
+                # 删除图片
+                delete_images_from_aliyun(custom_skus)
+            else:
+                logger.info("没有找到需要删除的图片")
+            
+            # 等待24小时后再次执行
+            time.sleep(24 * 60 * 60)
+            
+        except Exception as e:
+            logger.error(f"删除任务执行过程中发生错误: {str(e)}")
+            # 发生错误时等待1小时后重试
+            time.sleep(60 * 60)
+
 
 # # # 请求内容：
 # {
@@ -353,4 +450,16 @@ def queue_status():
     }), 200
 
 if __name__ == '__main__':
+    # 启动删除旧图片的定时任务线程
+    delete_thread = threading.Thread(target=delete_old_images_task)
+    delete_thread.daemon = True
+    delete_thread.start()
+    
+    # 启动工作线程
+    for _ in range(5):  # 启动5个工作线程
+        t = threading.Thread(target=worker)
+        t.daemon = True
+        t.start()
+    
+    # 启动Flask应用
     app.run(host='0.0.0.0', port=8088, debug=False)

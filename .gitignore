@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.env
+.venv
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.project
+.pydevproject
+.settings/
+
+# 日志文件
+*.log
+logs/
+log/
+
+# 临时文件
+temp_images/
+*.tmp
+*.bak
+*.swp
+*~
+
+# 配置文件（包含敏感信息）
+# config.py
+# config_*.py
+*.env
+.env.*
+
+# 数据库文件
+*.db
+*.sqlite3
+*.sqlite
+
+# 其他
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+.hypothesis/
+.coverage.*
+coverage.xml
+*.cover 
